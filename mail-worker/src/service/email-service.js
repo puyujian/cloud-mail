@@ -31,11 +31,30 @@ const emailService = {
 		let { emailId, type, accountId, size, timeSort, allReceive, full } = params;
 
 		size = Number(size);
+		type = Number(type);
 		emailId = Number(emailId) || 0;
 		timeSort = Number(timeSort);
 		accountId = Number(accountId);
 		allReceive = Number(allReceive);
-		full = Number(full) === 1;
+		full = Number(full);
+
+		if (isNaN(type)) {
+			type = 0;
+		}
+
+		if (isNaN(accountId)) {
+			throw new BizError(t('emptyAccountId'));
+		}
+
+		if (isNaN(size)) {
+			size = 10;
+		}
+
+		if (isNaN(full)) {
+			full = 1;
+		}
+
+		full = full === 1;
 
 		if (size > 50) {
 			size = 50;
@@ -129,7 +148,8 @@ const emailService = {
 
 	applyListText(list) {
 		for (const item of list) {
-			item.text = this.toListText(item);
+			item.listText = this.toListText(item);
+			delete item.text;
 			delete item.content;
 		}
 		return list;
@@ -813,7 +833,7 @@ const emailService = {
 			allReceive = accountRow.allReceive;
 		}
 
-		let list = await orm(c).select({ ...emailBriefColumns }).from(email)
+		const list = await orm(c).select({ ...emailListColumns }).from(email)
 			.innerJoin(
 				account,
 				eq(account.accountId, email.accountId)
@@ -830,7 +850,11 @@ const emailService = {
 			.orderBy(desc(email.emailId))
 			.limit(20);
 
-		return this.applyListText(list);
+		await this.emailAddAtt(c, list);
+		for (const item of list) {
+			item.listText = this.toListText(item);
+		}
+		return list;
 	},
 
 	async physicsDelete(c, params) {
@@ -876,14 +900,27 @@ const emailService = {
 		let { emailId, size, name, subject, accountEmail, userEmail, type, timeSort, full } = params;
 
 		size = Number(size);
-
 		emailId = Number(emailId) || 0;
 		timeSort = Number(timeSort);
-		full = Number(full) === 1;
+		full = Number(full);
+
+		if (type === undefined) {
+			type = 'receive';
+		}
+
+		if (isNaN(size)) {
+			size = 10;
+		}
 
 		if (size > 50) {
 			size = 50;
 		}
+
+		if (isNaN(full)) {
+			full = 1;
+		}
+
+		full = full === 1;
 
 		const filters = this.allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort });
 		const countFilters = this.allEmailListFilters({ emailId, name, subject, accountEmail, userEmail, type, timeSort, withCursor: false });
@@ -943,7 +980,7 @@ const emailService = {
 
 		const { emailId } = params;
 
-		let list = await orm(c).select({ ...emailBriefColumns, userEmail: user.email }).from(email)
+		let list = await orm(c).select({ ...emailListColumns, userEmail: user.email }).from(email)
 			.leftJoin(user, eq(email.userId, user.userId))
 			.where(
 				and(
@@ -953,7 +990,11 @@ const emailService = {
 			.orderBy(desc(email.emailId))
 			.limit(20);
 
-		return this.applyListText(list);
+		await this.emailAddAtt(c, list);
+		for (const item of list) {
+			item.listText = this.toListText(item);
+		}
+		return list;
 	},
 
 	async emailAddAtt(c, list) {
