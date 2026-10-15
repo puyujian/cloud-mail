@@ -33,3 +33,18 @@ app.put('/setting/setBlacklist', async (c) => {
 	return c.json(result.ok(setting));
 })
 
+app.get('/setting/querySyncClipboard', async (c) => {
+	const data = await settingService.getSyncClipboard(c);
+	return c.json(result.ok(data));
+});
+
+app.put('/setting/setSyncClipboard', async (c) => {
+	const data = await settingService.setSyncClipboard(c, await c.req.json());
+	return c.json(result.ok(data));
+});
+
+app.put('/setting/testSyncClipboard', async (c) => {
+	const data = await settingService.testSyncClipboard(c, await c.req.json());
+	return c.json(result.ok(data));
+});
+

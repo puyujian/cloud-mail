@@ -143,6 +143,14 @@ export const settingConst = {
 	authRefresh: {
 		OPEN: 1,
 		CLOSE: 0
+	},
+	syncClipboardStatus: {
+		OPEN: 0,
+		CLOSE: 1
+	},
+	syncClipboardMode: {
+		ALL: 0,
+		SELECTED: 1
 	}
 }
 

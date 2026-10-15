@@ -32,8 +32,53 @@ const dbInit = {
 		await this.v3_1DB(c);
 		await this.v3_2DB(c);
 		await this.v3_3DB(c);
+		await this.v3_4DB(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	async v3_4DB(c) {
+		// SyncClipboard 集成（默认关闭）。
+		// 刻意不复用上游「多个 ALTER 放一个 batch + catch 全吞」的写法：只要其中一列已存在，
+		// 整批就会回滚导致剩余缺列永远补不上，而且真实的写库/权限错误会被吞掉。
+		// 这里先读 PRAGMA 再逐列补缺：全新库、旧库、半升级库、重复执行都能恢复到完整状态，
+		// 非“重复列”的异常直接上抛，交给 /init 暴露失败。
+		await this.addSettingColumns(c, {
+			sync_clipboard_status: 'INTEGER NOT NULL DEFAULT 1',
+			sync_clipboard_url: "TEXT NOT NULL DEFAULT ''",
+			sync_clipboard_username: "TEXT NOT NULL DEFAULT ''",
+			sync_clipboard_password: "TEXT NOT NULL DEFAULT ''",
+			sync_clipboard_mode: 'INTEGER NOT NULL DEFAULT 0',
+			sync_clipboard_emails: "TEXT NOT NULL DEFAULT ''",
+			sync_clipboard_retry: 'INTEGER NOT NULL DEFAULT 2',
+			sync_clipboard_timeout: 'INTEGER NOT NULL DEFAULT 5000'
+		});
+	},
+
+	async settingColumns(c) {
+		const { results } = await c.env.db.prepare(`SELECT name FROM pragma_table_info('setting')`).all();
+		return new Set((results || []).map(row => row.name));
+	},
+
+	//列名/类型均为代码内常量（非外部输入），逐列补齐
+	async addSettingColumns(c, columnDefs) {
+
+		const existing = await this.settingColumns(c);
+		const missing = Object.entries(columnDefs).filter(([name]) => !existing.has(name));
+
+		for (const [name, definition] of missing) {
+			try {
+				await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN ${name} ${definition}`).run();
+			} catch (e) {
+				// 仅容忍并发下另一个 /init 刚添加同列的情况：复检确实已存在则继续，
+				// 其余错误（权限、磁盘、语法等）一律上抛，不被吞掉
+				const columns = await this.settingColumns(c);
+				if (!columns.has(name)) {
+					throw e;
+				}
+				console.warn(`设置列已由并发迁移添加：${name}`);
+			}
+		}
 	},
 
 	async v3_3DB(c) {

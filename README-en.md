@@ -59,6 +59,8 @@ With only one domain, you can create multiple different email addresses, similar
 
 - **🔢 Verification Code Recognition**: Auto-detect codes via Workers AI
 
+- **📋 Clipboard Sync**: Push detected codes to your own SyncClipboardCfServer instance (disabled by default, writes the current clipboard only)
+
 - **📈 Data Visualization**: Use ECharts to visualize system data, including user email growth.
 
 - **🎨 Personalization**: Customize website title, login background, and transparency.
@@ -66,6 +68,101 @@ With only one domain, you can create multiple different email addresses, similar
 - **🤖 CAPTCHA**: Integrated with Turnstile CAPTCHA to prevent automated registration.
 
 - **📜 More Features**: Under development...
+
+## SyncClipboard Code Sync (optional, disabled by default)
+
+Pushes the verification code detected by Workers AI into the current clipboard of the SyncClipboardCfServer instance
+**configured by the admin**. The server keeps the current profile, history and broadcasts itself; this integration only
+issues `PUT /SyncClipboard.json`. QR codes are not supported.
+
+### Behaviour
+
+- Reuses the existing extraction: only when `aiCode` is enabled, `aiCodeFilter` matches and a non-empty code was extracted
+- Trigger scope = **emails actually accepted by the system** (blacklisted, `receive` disabled, `noRecipient.CLOSE` rejects and
+  domain/sender permission failures never trigger)
+- Scope is admin-selectable: `all` (every accepted email, including unregistered mailboxes) or `selected recipients`
+  (comma separated, case-insensitive)
+- Fully independent of Telegram / Webhook / email forwarding and of the legacy `ruleType` rules: their failures never block
+  this integration, and this integration never breaks mail delivery (`ctx.waitUntil` + catch)
+- Sends the plain code, preserving leading zeros; `size` is the character count
+- Request shape (protocol contract):
+
+```json
+{
+  "type": "Text",
+  "hash": "UPPERCASE SHA256(UTF-8 code)",
+  "text": "012345",
+  "hasData": false,
+  "dataName": null,
+  "size": 6
+}
+```
+
+### Configuration
+
+System settings → Email push → SyncClipboard Sync:
+
+| Field | Notes |
+| --- | --- |
+| Switch | **Disabled** by default |
+| Instance URL | Must be a bare `https://` host (port allowed); no path, query or embedded credentials |
+| Username / Password | HTTP Basic credentials; the **password is write-only** and is never returned by any API. Leave empty to keep the current value, tick clear to erase it (disable sync first) |
+| Scope | All mailboxes / selected recipients |
+| Recipients | Comma separated list for selected mode |
+| Retries | 0–3 (default 2); applied to network errors / 5xx / 429 / 408 only |
+| Test connection | **Read-only** `GET /api/version` (falls back to `GET /SyncClipboard.json`); never overwrites the clipboard |
+
+APIs: `GET /api/setting/querySyncClipboard`, `PUT /api/setting/setSyncClipboard`, `PUT /api/setting/testSyncClipboard`,
+all requiring `setting:query` / `setting:set`. `/setting/query` only returns `hasSyncClipboardPassword`, and the public
+`/setting/websiteConfig` never contains any of these fields.
+
+### Database upgrade
+
+After deploying, call `GET /api/init/<jwt_secret>` once (same upgrade path as before; the GitHub Actions workflow already does this):
+
+- New migration `v3_4DB` adds the 8 `sync_clipboard_*` columns to `setting` and refreshes the KV cache at the end
+- It reads `PRAGMA table_info(setting)` first and adds **missing columns one by one**: old, fresh, partially migrated and
+  repeated runs all converge; only a concurrent `/init` adding the same column is tolerated, every other database error is thrown
+- All new columns have defaults and the feature is **disabled by default**; if KV lacks the new fields the runtime treats the feature as off
+
+### Security
+
+- HTTPS only, public hostnames only: rejects embedded credentials, IP literals (`[::1]`, decimal IPs), `localhost`/`*.local`/
+  `*.internal` and non-root paths
+- Always `redirect: 'manual'` — redirects are **never followed**, so Basic credentials cannot leak to a third-party host
+- `AbortController` timeouts (1–15s, default 5s); 401/403 and other 4xx are never retried; 5xx/429/408/network errors are retried
+  at most 3 times with a 250/500/750ms backoff
+- The whole operation (retries included) is capped by a 25s budget so it always fits the `ctx.waitUntil` window
+- Response bodies are never read or cached; logs contain a fixed reason plus `emailId`/status only — **never the code, password,
+  target URL, response body or exception message**
+- Settings reads return a masked copy and never write masks back into the cached object, so stored credentials cannot be corrupted
+
+### Deduplication and ordering (best effort, known limits)
+
+- Dedup key = `messageId` (or `emailId` when absent) + recipient; neither the key nor the KV value contains the code, so the
+  same code in different emails is written twice
+- The marker is written only after a successful PUT (failures stay retryable); marker TTL is 24 hours
+- **No global exactly-once guarantee**: KV is eventually consistent and there is no cross-request atomicity, so a duplicate
+  delivery can rarely write twice
+- **No ordering guarantee**: there is no persistent ordered queue, so out-of-order or delayed emails are written in arrival
+  order and **an older, late code can overwrite a newer value**
+- A target hostname that resolves to a private IP cannot be detected at configuration time (only literals are checked)
+
+### Local tests
+
+```bash
+cd mail-worker
+pnpm install --frozen-lockfile
+pnpm test        # local unit tests (vitest + miniflare local D1/KV, no remote writes)
+pnpm run test:watch
+```
+
+> `pnpm test` is now the local unit test suite; the former "deploy to the test environment" script was renamed to
+> `pnpm run deploy:test` (`wrangler deploy -c wrangler-test.toml`). Tests use the **local** bindings from
+> `wrangler-test-local.toml`; never add `--remote` to unit tests.
+
+Build artifacts: the `mail-vue` frontend builds with `--mode release` into `mail-worker/dist` (uploaded via the `assets.directory`
+binding in `wrangler.toml`), and the Worker bundle is produced by `wrangler deploy`.
 
 ## Tech Stack
 

@@ -23,3 +23,15 @@ export function deleteBackground() {
 export function setBlackList(params) {
     return http.put('/setting/setBlacklist', params)
 }
+
+export function querySyncClipboard() {
+    return http.get('/setting/querySyncClipboard')
+}
+
+export function setSyncClipboard(params) {
+    return http.put('/setting/setSyncClipboard', params)
+}
+
+export function testSyncClipboard(params) {
+    return http.put('/setting/testSyncClipboard', params)
+}

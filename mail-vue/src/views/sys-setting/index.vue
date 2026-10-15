@@ -262,6 +262,20 @@
                 </div>
               </div>
               <div class="setting-item">
+                <div>
+                  <span>{{ $t('syncClipboard') }}</span>
+                  <el-tooltip effect="dark" :content="$t('syncClipboardDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div class="forward">
+                  <span>{{ setting.syncClipboardStatus === 0 ? $t('enabled') : $t('disabled') }}</span>
+                  <el-button class="opt-button" size="small" type="primary" @click="openSyncClipboardSetting">
+                    <Icon icon="fluent:settings-48-regular" width="18" height="18"/>
+                  </el-button>
+                </div>
+              </div>
+              <div class="setting-item">
                 <div><span>{{ $t('forwardingRules') }}</span></div>
                 <div class="forward">
                   <span>{{ setting.ruleType === 0 ? $t('forwardAll') : $t('rules') }}</span>
@@ -711,6 +725,70 @@ Authorization: &lt;secret&gt;</pre>
         </template>
       </el-dialog>
       <el-dialog
+          v-model="syncClipboardShow"
+          class="forward-dialog"
+          @closed="resetSyncClipboardForm"
+      >
+        <template #header>
+          <div class="forward-head">
+            <span class="forward-set-title">{{ $t('syncClipboard') }}</span>
+            <el-tooltip effect="dark" :content="$t('syncClipboardDesc')">
+              <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+            </el-tooltip>
+          </div>
+        </template>
+        <div class="forward-set-body">
+          <el-input :placeholder="$t('syncClipboardUrl')" v-model="syncClipboardUrl"></el-input>
+          <el-input :placeholder="$t('syncClipboardUsername')" v-model="syncClipboardUsername"></el-input>
+          <el-input
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :placeholder="syncClipboardHasPassword ? $t('syncClipboardPasswordKeep') : $t('syncClipboardPasswordPlaceholder')"
+              v-model="syncClipboardPassword"
+          ></el-input>
+          <div v-if="syncClipboardHasPassword" class="tg-msg-label">
+            <span>{{ $t('syncClipboardPasswordSet') }}</span>
+            <el-checkbox v-model="syncClipboardClearPassword">{{ $t('syncClipboardClearPassword') }}</el-checkbox>
+          </div>
+          <div v-if="syncClipboardClearPassword && syncClipboardStatus === 0" class="sync-clipboard-hint">
+            {{ $t('syncClipboardClearPasswordHint') }}
+          </div>
+          <div class="tg-msg-label">
+            <span>{{ $t('syncClipboardMode') }}</span>
+            <el-radio-group v-model="syncClipboardMode">
+              <el-radio :value="0">{{ $t('syncClipboardModeAll') }}</el-radio>
+              <el-radio :value="1">{{ $t('syncClipboardModeSelected') }}</el-radio>
+            </el-radio-group>
+          </div>
+          <el-input-tag
+              v-if="syncClipboardMode === 1"
+              tag-type="success"
+              :placeholder="$t('syncClipboardEmailsInputDesc')"
+              v-model="syncClipboardEmails"
+              @add-tag="syncClipboardEmailAddTag"
+          ></el-input-tag>
+          <div class="tg-msg-label">
+            <span>{{ t('syncClipboardRetry') }}</span>
+            <el-input-number v-model="syncClipboardRetry" :min="0" :max="3" controls-position="right"/>
+          </div>
+        </div>
+        <template #footer>
+          <div class="dialog-footer">
+            <el-switch v-model="syncClipboardStatus" :active-value="0" :inactive-value="1" :active-text="$t('enable')"
+                       :inactive-text="$t('disable')"/>
+            <div class="webhook-footer-right">
+              <el-button :loading="syncClipboardTestLoading" @click="syncClipboardTest">
+                {{ $t('syncClipboardTest') }}
+              </el-button>
+              <el-button :loading="settingLoading" type="primary" @click="syncClipboardSave">
+                {{ $t('save') }}
+              </el-button>
+            </div>
+          </div>
+        </template>
+      </el-dialog>
+      <el-dialog
           v-model="forwardRulesShow"
           class="forward-dialog"
       >
@@ -933,7 +1011,7 @@ Authorization: &lt;secret&gt;</pre>
 
 <script setup>
 import {computed, defineOptions, nextTick, reactive, ref} from "vue";
-import {deleteBackground, setBackground, setBlackList, settingQuery, settingSet} from "@/request/setting.js";
+import {deleteBackground, querySyncClipboard, setBackground, setBlackList, settingQuery, settingSet, setSyncClipboard, testSyncClipboard} from "@/request/setting.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useUiStore} from "@/store/ui.js";
 import {useUserStore} from "@/store/user.js";
@@ -1074,6 +1152,18 @@ const webhookStatus = ref(1)
 const webhookRetry = ref(0)
 const webhookSecret = ref('')
 const webhookFormatShow = ref(false)
+//SyncClipboard 集成（密码只写不读，不回显）
+const syncClipboardShow = ref(false)
+const syncClipboardStatus = ref(1)
+const syncClipboardUrl = ref('')
+const syncClipboardUsername = ref('')
+const syncClipboardPassword = ref('')
+const syncClipboardHasPassword = ref(false)
+const syncClipboardClearPassword = ref(false)
+const syncClipboardMode = ref(0)
+const syncClipboardEmails = ref([])
+const syncClipboardRetry = ref(2)
+const syncClipboardTestLoading = ref(false)
 const webhookPayloadExample = `{
   "emailId": 1,
   "sendEmail": "hello@example.com",
@@ -1417,6 +1507,139 @@ function webhookSave() {
   editSetting(form)
 }
 
+
+function syncClipboardReasonFallback() {
+  return t('syncClipboardTestFail')
+}
+
+function resetSyncClipboardForm() {
+  syncClipboardPassword.value = ''
+  syncClipboardClearPassword.value = false
+}
+
+function openSyncClipboardSetting() {
+  if (settingLoading.value) return
+  resetSyncClipboardForm()
+  querySyncClipboard().then(data => {
+    syncClipboardStatus.value = data.status
+    syncClipboardUrl.value = data.url || ''
+    syncClipboardUsername.value = data.username || ''
+    syncClipboardHasPassword.value = !!data.hasPassword
+    syncClipboardMode.value = data.mode
+    syncClipboardEmails.value = data.emails ? data.emails.split(',').filter(Boolean) : []
+    syncClipboardRetry.value = data.retry ?? 2
+    syncClipboardShow.value = true
+  }).catch(() => {
+  })
+}
+
+function syncClipboardEmailAddTag(val) {
+  const emails = Array.from(new Set(
+      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+  ));
+
+  syncClipboardEmails.value.splice(syncClipboardEmails.value.length - 1, 1)
+
+  emails.forEach(email => {
+    if (isEmail(email) && !syncClipboardEmails.value.includes(email)) {
+      syncClipboardEmails.value.push(email)
+    }
+  })
+}
+
+function buildSyncClipboardForm() {
+  const form = {
+    status: syncClipboardStatus.value,
+    url: syncClipboardUrl.value.trim(),
+    username: syncClipboardUsername.value.trim(),
+    mode: syncClipboardMode.value,
+    emails: syncClipboardEmails.value + '',
+    retry: Number(syncClipboardRetry.value) || 0
+  }
+
+  // 密码留空=保留旧值；勾选清除=显式清空
+  const password = syncClipboardPassword.value
+  if (password) {
+    form.password = password
+  } else if (syncClipboardClearPassword.value && syncClipboardHasPassword.value) {
+    form.clearPassword = true
+  }
+
+  return form
+}
+
+function syncClipboardFormCheck(form) {
+  if (!form.url) {
+    ElMessage({message: t('syncClipboardUrlInvalid'), type: 'warning', plain: true})
+    return false
+  }
+  if (form.mode === 1 && !form.emails) {
+    ElMessage({message: t('syncClipboardEmailRequired'), type: 'warning', plain: true})
+    return false
+  }
+  if (form.status === 0 && !form.username) {
+    ElMessage({message: t('syncClipboardUsernameRequired'), type: 'warning', plain: true})
+    return false
+  }
+  if (form.status === 0 && !form.password && !syncClipboardHasPassword.value) {
+    ElMessage({message: t('syncClipboardPasswordRequired'), type: 'warning', plain: true})
+    return false
+  }
+  if (form.status === 0 && form.clearPassword) {
+    ElMessage({message: t('syncClipboardClearPasswordHint'), type: 'warning', plain: true})
+    return false
+  }
+  return true
+}
+
+// 只读测试连接：后端仅 GET，绝不覆盖剪贴板
+function syncClipboardTest() {
+  if (syncClipboardTestLoading.value) return
+  const form = buildSyncClipboardForm()
+  if (!syncClipboardFormCheck(form)) return
+
+  syncClipboardTestLoading.value = true
+  testSyncClipboard({url: form.url, username: form.username, password: form.password}).then(data => {
+    syncClipboardTestLoading.value = false
+    if (data.ok) {
+      ElMessage({
+        message: `${t('syncClipboardTestOk')}${data.status ? ` (${data.status})` : ''}`,
+        type: 'success',
+        plain: true
+      })
+      return
+    }
+    ElMessage({
+      message: data.message || syncClipboardReasonFallback(),
+      type: 'error',
+      plain: true
+    })
+  }).catch(() => {
+    syncClipboardTestLoading.value = false
+  })
+}
+
+function syncClipboardSave() {
+  if (settingLoading.value) return
+  const form = buildSyncClipboardForm()
+  if (!syncClipboardFormCheck(form)) return
+
+  settingLoading.value = true
+  setSyncClipboard(form).then(data => {
+    settingLoading.value = false
+    resetSyncClipboardForm()
+    syncClipboardHasPassword.value = !!data.hasPassword
+    setting.value.syncClipboardStatus = data.status
+    ElMessage({
+      message: t('saveSuccessMsg'),
+      type: "success",
+      plain: true
+    })
+    syncClipboardShow.value = false
+  }).catch(() => {
+    settingLoading.value = false
+  })
+}
 
 function ruleEmailSave() {
   const form = {
@@ -1937,6 +2160,12 @@ function editSetting(settingForm, refreshStatus = true) {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.sync-clipboard-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-color-warning);
 }
 
 .webhook-format-title {

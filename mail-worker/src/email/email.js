@@ -12,10 +12,13 @@ import userService from '../service/user-service';
 import telegramService from '../service/telegram-service';
 import aiService from '../service/ai-service';
 import webhookService from '../service/webhook-service';
+import syncClipboardService from '../service/sync-clipboard-service';
 
 export async function email(message, env, ctx) {
 
 	try {
+
+		const settingsRow = await settingService.query({ env });
 
 		const {
 			receive,
@@ -36,7 +39,7 @@ export async function email(message, env, ctx) {
 			blackFrom,
 			aiCode,
 			aiCodeFilter
-		} = await settingService.query({ env });
+		} = settingsRow;
 
 		if (receive === settingConst.receive.CLOSE) {
 			message.setReject('Service suspended');
@@ -157,6 +160,29 @@ export async function email(message, env, ctx) {
 		}
 
 		emailRow = await emailService.completeReceive({ env }, account ? emailConst.status.RECEIVE : emailConst.status.NOONE, emailRow.emailId);
+
+		//同步验证码到 SyncClipboardCfServer（只写当前剪贴板）
+		//独立于下方 ruleType/ruleEmail 等通用转发规则；范围 = 已被系统接收的邮件
+		//（黑名单、receive 关闭、noRecipient.CLOSE 拒收、域名/发件人权限不通过的邮件都已提前 return，不会走到这里）
+		//不过滤 account：noRecipient 允许时未注册收件箱的邮件同样属于“已接收”，由管理员用 all/selected 自行限定范围
+		//任何异常都不得导致收信失败：catch 兜底 + ctx.waitUntil 后台执行
+		{
+
+			const syncTask = syncClipboardService.syncReceivedEmail({ env }, {
+				config: syncClipboardService.resolveConfig(settingsRow),
+				toEmail: message.to,
+				code: emailRow.code,
+				messageId: emailRow.messageId,
+				emailId: emailRow.emailId
+			}).catch(e => console.error(`SyncClipboard 同步异常（已忽略，不影响收信）name=${e?.name || 'Error'}`));
+
+			if (ctx && typeof ctx.waitUntil === 'function') {
+				ctx.waitUntil(syncTask);
+			} else {
+				await syncTask;
+			}
+
+		}
 
 
 		if (ruleType === settingConst.ruleType.RULE) {

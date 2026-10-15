@@ -67,6 +67,14 @@ export const setting = sqliteTable('setting', {
 	webhookUrl: text('webhook_url').default('').notNull(),
 	webhookStatus: integer('webhook_status').default(1).notNull(),
 	webhookRetry: integer('webhook_retry').default(0).notNull(),
-	webhookSecret: text('webhook_secret').default('').notNull()
+	webhookSecret: text('webhook_secret').default('').notNull(),
+	syncClipboardStatus: integer('sync_clipboard_status').default(1).notNull(),
+	syncClipboardUrl: text('sync_clipboard_url').default('').notNull(),
+	syncClipboardUsername: text('sync_clipboard_username').default('').notNull(),
+	syncClipboardPassword: text('sync_clipboard_password').default('').notNull(),
+	syncClipboardMode: integer('sync_clipboard_mode').default(0).notNull(),
+	syncClipboardEmails: text('sync_clipboard_emails').default('').notNull(),
+	syncClipboardRetry: integer('sync_clipboard_retry').default(2).notNull(),
+	syncClipboardTimeout: integer('sync_clipboard_timeout').default(5000).notNull()
 });
 export default setting

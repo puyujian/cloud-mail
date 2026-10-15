@@ -1,0 +1,20 @@
+# 本地单测专用 wrangler 配置（vitest-pool-workers / miniflare）
+# 约束：这里的所有绑定都是 miniflare 本地模拟，绝不指向远端 D1/KV；
+# 不要在本文件里写真实 database_id / namespace id，也不要给测试加 --remote。
+name = "cloud-mail-test-local"
+main = "src/index.js"
+compatibility_date = "2025-06-04"
+
+[[d1_databases]]
+binding = "db"
+database_name = "cloud-mail-test-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+
+[[kv_namespaces]]
+binding = "kv"
+id = "00000000000000000000000000000001"
+
+[vars]
+domain = ["example.com"]
+admin = "admin@example.com"
+jwt_secret = "local-test-jwt-secret"
