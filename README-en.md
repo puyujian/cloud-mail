@@ -112,18 +112,58 @@ System settings → Email push → SyncClipboard Sync:
 | Retries | 0–3 (default 2); applied to network errors / 5xx / 429 / 408 only |
 | Test connection | **Read-only** `GET /api/version` (falls back to `GET /SyncClipboard.json`); never overwrites the clipboard |
 
-APIs: `GET /api/setting/querySyncClipboard`, `PUT /api/setting/setSyncClipboard`, `PUT /api/setting/testSyncClipboard`,
-all requiring `setting:query` / `setting:set`. `/setting/query` only returns `hasSyncClipboardPassword`, and the public
-`/setting/websiteConfig` never contains any of these fields.
+APIs `GET /api/setting/querySyncClipboard`, `PUT /api/setting/setSyncClipboard` and `PUT /api/setting/testSyncClipboard`
+all require `setting:query` / `setting:set`:
 
-### Database upgrade
+- **The authorised admin APIs return the instance URL, the username and a `hasPassword` boolean, but never the password**
+  (a stored password cannot be read back, only replaced or cleared)
+- `/setting/query` (generic settings read) only returns `hasSyncClipboardPassword` — no URL, username or password
+- `/setting/websiteConfig` (public) contains **none of these fields** (no switch, URL, username, password or recipient list)
 
-After deploying, call `GET /api/init/<jwt_secret>` once (same upgrade path as before; the GitHub Actions workflow already does this):
+### Database upgrade (narrow migration recommended)
 
-- New migration `v3_4DB` adds the 8 `sync_clipboard_*` columns to `setting` and refreshes the KV cache at the end
-- It reads `PRAGMA table_info(setting)` first and adds **missing columns one by one**: old, fresh, partially migrated and
-  repeated runs all converge; only a concurrent `/init` adding the same column is tolerated, every other database error is thrown
-- All new columns have defaults and the feature is **disabled by default**; if KV lacks the new fields the runtime treats the feature as off
+This feature only needs 8 new columns on `setting` (all with defaults; the feature is disabled by default).
+
+**Recommended path: add the columns first, then deploy, then refresh KV via the first settings save**
+
+1. Add the columns (idempotent, safe to re-run; the single source of truth is `mail-worker/src/init/setting-columns.mjs`,
+   shared with the Worker-side `v3_4DB`):
+
+```bash
+cd mail-worker
+# default: local database + dry-run (prints the plan, writes nothing)
+node scripts/migrate-sync-clipboard.mjs
+
+# remote production database: requires --remote + --allow-remote-write + ALLOW_REMOTE_WRITE=1
+ALLOW_REMOTE_WRITE=1 node scripts/migrate-sync-clipboard.mjs \
+  --remote --allow-remote-write --apply --config wrangler.toml --database <D1 name>
+```
+
+   The tool only does `PRAGMA table_info(setting)` → per-column ALTER → verify. It hardcodes no account or credential
+   (authentication is left to the wrangler login or the deploy engineer's authorised bridge). It is equivalent to running
+   these 8 statements manually (add only the ones that are missing):
+
+```sql
+ALTER TABLE setting ADD COLUMN sync_clipboard_status INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE setting ADD COLUMN sync_clipboard_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_username TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_password TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_mode INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE setting ADD COLUMN sync_clipboard_emails TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_retry INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE setting ADD COLUMN sync_clipboard_timeout INTEGER NOT NULL DEFAULT 5000;
+```
+
+2. Deploy the new Worker (keeping the existing bindings and assets).
+3. Save the SyncClipboard settings once in System settings → Email push (or call `/init` once) to write the new fields into KV;
+   **if KV lacks them the runtime treats the feature as disabled**, so nothing can be enabled accidentally.
+
+> `GET /api/init/<jwt_secret>` runs **all historical migrations** (legacy `UPDATE`s, index rebuilds). It is not required for
+> this feature and is not the recommended upgrade path; use it only when you also need the other historical changes.
+
+Migration semantics: it reads `PRAGMA` first and adds missing columns one by one, so old, fresh, partially migrated
+(a previous run that failed midway) and repeated runs all converge. Only a concurrent migration adding the same column is
+tolerated; every other database error is thrown (the tool exits non-zero, `/init` reports failure).
 
 ### Security
 
@@ -163,6 +203,41 @@ pnpm run test:watch
 
 Build artifacts: the `mail-vue` frontend builds with `--mode release` into `mail-worker/dist` (uploaded via the `assets.directory`
 binding in `wrangler.toml`), and the Worker bundle is produced by `wrangler deploy`.
+
+### Online acceptance
+
+`mail-worker/test/online/verify-sync-clipboard.mjs` has two strictly separated modes:
+
+- **Read-only connectivity check (default)**: `GET /api/version` (status code only), the read-only connection test
+  (`PUT /api/setting/testSyncClipboard`, which only issues a GET), and a config summary (status/mode/hasPassword/retry and the
+  target hostname). It **never reads or prints email bodies or clipboard content, never requires an external email and never waits
+  for a code**, and it changes no configuration.
+- **Integration acceptance (`--apply`)**: writes the config, waits for a real external email and validates the clipboard. Output
+  contains lengths, booleans and status codes only — **never the code or the clipboard text**. On-site sending does not go through
+  the Email Worker and will not trigger the sync, so the mail must arrive from outside.
+
+Built-in safety:
+
+- Credentials come from environment variables only (`SYNC_USER` / `SYNC_PASS`); **passing a password on the command line is
+  rejected** (it would show up in the process list)
+- `--apply` requires an explicit `--expect-host` matching `--sync-url` plus the environment variable `ALLOW_REMOTE_TARGET=1`
+- `--apply` refuses configurations that already have a password (`hasPassword=true`), are already enabled (`status=0`) or already
+  point at another target, so a user's production target and credentials cannot be overwritten; use it against an isolated instance
+- `--restore` puts the previous configuration back afterwards (the starting state is guaranteed to be "closed, no password", so the
+  test password is cleared as well)
+
+```bash
+cd mail-worker
+# read-only check
+WORKER_URL=https://mail.example.com ADMIN_JWT=... \
+SYNC_URL=https://sync-test.example.workers.dev SYNC_USER=admin SYNC_PASS=... \
+node test/online/verify-sync-clipboard.mjs
+
+# integration acceptance (isolated instance)
+ALLOW_REMOTE_TARGET=1 WORKER_URL=... ADMIN_JWT=... SYNC_URL=... SYNC_USER=... SYNC_PASS=... \
+node test/online/verify-sync-clipboard.mjs --apply --expect-host sync-test.example.workers.dev \
+  --recipient admin@example.com --restore
+```
 
 ## Tech Stack
 

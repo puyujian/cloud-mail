@@ -115,18 +115,54 @@
 | 重试次数 | 0–3（默认 2），仅对网络错误 / 5xx / 429 / 408 生效 |
 | 测试连接 | **只读** `GET /api/version`（无则回退 `GET /SyncClipboard.json`），绝不覆盖剪贴板 |
 
-接口：`GET /api/setting/querySyncClipboard`、`PUT /api/setting/setSyncClipboard`、`PUT /api/setting/testSyncClipboard`，
-均要求 `setting:query` / `setting:set` 权限；返回体不含 URL/用户名/密码等敏感信息以外的任何凭据，`/setting/query` 只回传 `hasSyncClipboardPassword`，
-`/setting/websiteConfig`（公开接口）不包含任何本功能字段。
+接口 `GET /api/setting/querySyncClipboard`、`PUT /api/setting/setSyncClipboard`、`PUT /api/setting/testSyncClipboard`
+均要求 `setting:query` / `setting:set` 权限：
 
-### 数据库升级
+- **授权管理接口会返回实例 URL、用户名与 `hasPassword` 布尔值，但永不返回密码**（密码写入后无法回读，只能重新设置或清除）
+- `/setting/query`（通用设置读取）只回传 `hasSyncClipboardPassword`，不返回本功能的 URL/用户名/密码
+- `/setting/websiteConfig`（公开接口）**不包含本功能任何字段**（无开关/URL/用户名/密码/名单）
 
-部署新版本后访问一次 `GET /api/init/<jwt_secret>`（与现有升级方式一致，GitHub Actions 部署流程已包含该步骤）：
+### 数据库升级（推荐窄口径迁移）
 
-- 新增迁移 `v3_4DB` 会为 `setting` 表补齐 8 个 `sync_clipboard_*` 列，并在结束时刷新 KV 缓存
-- 迁移先读 `PRAGMA table_info(setting)` 再**逐列**补缺：旧库、全新库、半升级（上次中途失败）库、重复执行都能恢复到完整状态；
-  只有“并发下另一个 /init 刚补上同列”才容错，其他真实写库错误会直接上抛
-- 所有新列都有默认值，功能**默认关闭**；KV 中若缺少新字段，运行时会按“关闭”处理，不会误开
+本功能只需要给 `setting` 表补 8 个新列（都有默认值，功能默认关闭）。
+
+**推荐路径：先补列，再部署，再首次保存刷新 KV**
+
+1. 补列（幂等，可重复执行；列定义唯一来源 `mail-worker/src/init/setting-columns.mjs`，与 Worker 内 `v3_4DB` 共用）：
+
+```bash
+cd mail-worker
+# 默认：本地库 + dry-run（只打印计划，零写入）
+node scripts/migrate-sync-clipboard.mjs
+
+# 远端正式库：必须同时给 --remote + --allow-remote-write + ALLOW_REMOTE_WRITE=1
+ALLOW_REMOTE_WRITE=1 node scripts/migrate-sync-clipboard.mjs \
+  --remote --allow-remote-write --apply --config wrangler.toml --database <D1名称>
+```
+
+   工具只做「读 `PRAGMA table_info(setting)` → 逐列 ALTER → 复核」，不硬编码账号/凭据（认证交给 wrangler 登录态或部署工程师的授权桥）；
+   也等同于手工执行下面 8 条 SQL（缺哪条补哪条）：
+
+```sql
+ALTER TABLE setting ADD COLUMN sync_clipboard_status INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE setting ADD COLUMN sync_clipboard_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_username TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_password TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_mode INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE setting ADD COLUMN sync_clipboard_emails TEXT NOT NULL DEFAULT '';
+ALTER TABLE setting ADD COLUMN sync_clipboard_retry INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE setting ADD COLUMN sync_clipboard_timeout INTEGER NOT NULL DEFAULT 5000;
+```
+
+2. 部署新版本 Worker（保持现有绑定与 assets）。
+3. 管理员在「系统设置 → 邮件推送 → SyncClipboard」保存一次配置（或访问一次 `/init`）即会把新字段写入 KV；
+   **KV 缺字段时运行时会按“关闭”处理**，不会误开。
+
+> `GET /api/init/<jwt_secret>` 会执行**全部历史迁移**（历史 `UPDATE`、索引重建等），对本功能并非必需，
+> 也不是推荐的首选升级方式；仅在需要一并补齐其他历史变更时使用。
+
+迁移语义：先读 `PRAGMA` 再逐列补缺，旧库 / 全新库 / 半升级（上次中途失败）/ 重复执行都能恢复到完整状态；
+只有“并发下另一个迁移刚补上同列”才容错，其他真实写库错误会直接上抛（工具退出非 0，`/init` 返回失败）。
 
 ### 安全设计
 
@@ -159,6 +195,35 @@ pnpm run test:watch
 > 测试使用 `wrangler-test-local.toml` 中的**本地模拟** D1/KV，禁止把 `--remote` 加进单测。
 
 构建物位置：前端 `mail-vue` 以 `--mode release` 构建，输出到 `mail-worker/dist`（由 `wrangler.toml` 的 `assets.directory` 上传），Worker 代码由 `wrangler deploy` 打包。
+
+### 线上验收
+
+`mail-worker/test/online/verify-sync-clipboard.mjs` 分两种模式，严格分离：
+
+- **只读连通性检查（默认）**：只做 `GET /api/version`（看状态码）、只读测试连接（`PUT /api/setting/testSyncClipboard`，后端仅 GET）、读配置摘要（status/mode/hasPassword/retry 与目标主机名）。
+  **不读取/不打印任何邮件正文或剪贴板内容，不要求外部发信，不等待验证码**，也不修改任何配置。
+- **集成验收（`--apply`）**：写配置 → 等外部真实邮件 → 校验剪贴板（输出只有长度/布尔/状态码，**不打印验证码与剪贴板正文**）。
+  站内发信不走 Email Worker，不会触发同步，必须从**站外**发信。
+
+安全约束（脚本内置）：
+
+- 凭据只从环境变量读取（`SYNC_USER` / `SYNC_PASS`），**命令行传密码会被拒绝**（避免留在进程列表）
+- `--apply` 必须同时满足：显式 `--expect-host` 且与 `--sync-url` 主机一致、环境变量 `ALLOW_REMOTE_TARGET=1`
+- `--apply` 拒绝在「已有密码 `hasPassword=true`」「已开启 `status=0`」「已指向其他目标」的配置上执行，避免覆盖用户正式目标与凭据；建议只对隔离实例使用
+- `--restore` 在结束后恢复脚本前的配置（起始状态必为“关闭且无密码”，因此会一并清除本次测试密码）
+
+```bash
+cd mail-worker
+# 只读检查
+WORKER_URL=https://mail.example.com ADMIN_JWT=... \
+SYNC_URL=https://sync-test.example.workers.dev SYNC_USER=admin SYNC_PASS=... \
+node test/online/verify-sync-clipboard.mjs
+
+# 集成验收（隔离实例）
+ALLOW_REMOTE_TARGET=1 WORKER_URL=... ADMIN_JWT=... SYNC_URL=... SYNC_USER=... SYNC_PASS=... \
+node test/online/verify-sync-clipboard.mjs --apply --expect-host sync-test.example.workers.dev \
+  --recipient admin@example.com --restore
+```
 
 ## 技术栈
 

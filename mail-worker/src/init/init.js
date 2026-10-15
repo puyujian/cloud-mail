@@ -1,6 +1,7 @@
 import settingService from '../service/setting-service';
 import emailUtils from '../utils/email-utils';
 import {emailConst} from "../const/entity-const";
+import { SETTING_TABLE, SYNC_CLIPBOARD_COLUMNS } from './setting-columns.mjs';
 
 const dbInit = {
 	async init(c) {
@@ -43,20 +44,12 @@ const dbInit = {
 		// 整批就会回滚导致剩余缺列永远补不上，而且真实的写库/权限错误会被吞掉。
 		// 这里先读 PRAGMA 再逐列补缺：全新库、旧库、半升级库、重复执行都能恢复到完整状态，
 		// 非“重复列”的异常直接上抛，交给 /init 暴露失败。
-		await this.addSettingColumns(c, {
-			sync_clipboard_status: 'INTEGER NOT NULL DEFAULT 1',
-			sync_clipboard_url: "TEXT NOT NULL DEFAULT ''",
-			sync_clipboard_username: "TEXT NOT NULL DEFAULT ''",
-			sync_clipboard_password: "TEXT NOT NULL DEFAULT ''",
-			sync_clipboard_mode: 'INTEGER NOT NULL DEFAULT 0',
-			sync_clipboard_emails: "TEXT NOT NULL DEFAULT ''",
-			sync_clipboard_retry: 'INTEGER NOT NULL DEFAULT 2',
-			sync_clipboard_timeout: 'INTEGER NOT NULL DEFAULT 5000'
-		});
+		// 列定义与 scripts/migrate-sync-clipboard.mjs 共用 src/init/setting-columns.mjs
+		await this.addSettingColumns(c, SYNC_CLIPBOARD_COLUMNS);
 	},
 
 	async settingColumns(c) {
-		const { results } = await c.env.db.prepare(`SELECT name FROM pragma_table_info('setting')`).all();
+		const { results } = await c.env.db.prepare(`SELECT name FROM pragma_table_info('${SETTING_TABLE}')`).all();
 		return new Set((results || []).map(row => row.name));
 	},
 
@@ -68,7 +61,7 @@ const dbInit = {
 
 		for (const [name, definition] of missing) {
 			try {
-				await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN ${name} ${definition}`).run();
+				await c.env.db.prepare(`ALTER TABLE ${SETTING_TABLE} ADD COLUMN ${name} ${definition}`).run();
 			} catch (e) {
 				// 仅容忍并发下另一个 /init 刚添加同列的情况：复检确实已存在则继续，
 				// 其余错误（权限、磁盘、语法等）一律上抛，不被吞掉
