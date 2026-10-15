@@ -189,10 +189,16 @@ cd mail-worker
 pnpm install --frozen-lockfile
 pnpm test        # 本地单测（vitest + miniflare 本地 D1/KV，不写远端）
 pnpm run test:watch
+
+# 窄屏弹窗布局守卫（无头 Chromium + 构建产物 CSS，需先 build）
+pnpm run test:layout
 ```
 
 > 注意：`pnpm test` 现在是本地单测；原先“部署到测试环境”的脚本改名为 `pnpm run deploy:test`（`wrangler deploy -c wrangler-test.toml`）。
 > 测试使用 `wrangler-test-local.toml` 中的**本地模拟** D1/KV，禁止把 `--remote` 加进单测。
+
+`pnpm run test:layout` 用无头 Chromium 按真实视口（320×568 / 390×844 / 1280×633）测量构建产物 CSS + 复刻的弹窗 DOM，断言 Save/Test 完整可见可点、无横向溢出、窄屏开关与按钮组换行；
+并把「删除新规则后必须复现溢出」作为对照组（证明该测量真的在测这件事）。源码层面的结构/样式契约由 `test/sync-clipboard-dialog-layout.spec.js` 在 `pnpm test` 中守护。
 
 构建物位置：前端 `mail-vue` 以 `--mode release` 构建，输出到 `mail-worker/dist`（由 `wrangler.toml` 的 `assets.directory` 上传），Worker 代码由 `wrangler deploy` 打包。
 

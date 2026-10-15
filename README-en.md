@@ -195,11 +195,20 @@ cd mail-worker
 pnpm install --frozen-lockfile
 pnpm test        # local unit tests (vitest + miniflare local D1/KV, no remote writes)
 pnpm run test:watch
+
+# narrow-screen dialog layout guard (headless Chromium + built CSS; build first)
+pnpm run test:layout
 ```
 
 > `pnpm test` is now the local unit test suite; the former "deploy to the test environment" script was renamed to
 > `pnpm run deploy:test` (`wrangler deploy -c wrangler-test.toml`). Tests use the **local** bindings from
 > `wrangler-test-local.toml`; never add `--remote` to unit tests.
+
+`pnpm run test:layout` measures the built CSS against a replica of the dialog DOM in headless Chromium at real viewports
+(320×568, 390×844, 1280×633) and asserts that Test/Save are fully visible and clickable, that nothing overflows horizontally
+and that the switch and button group stack on narrow screens. It also includes a control group (removing the new rules must
+reproduce the overflow), so the check cannot silently pass. Source-level structure/style contracts are guarded by
+`test/sync-clipboard-dialog-layout.spec.js` inside `pnpm test`.
 
 Build artifacts: the `mail-vue` frontend builds with `--mode release` into `mail-worker/dist` (uploaded via the `assets.directory`
 binding in `wrangler.toml`), and the Worker bundle is produced by `wrangler deploy`.

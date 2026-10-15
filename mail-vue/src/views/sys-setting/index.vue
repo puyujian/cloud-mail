@@ -270,7 +270,8 @@
                 </div>
                 <div class="forward">
                   <span>{{ setting.syncClipboardStatus === 0 ? $t('enabled') : $t('disabled') }}</span>
-                  <el-button class="opt-button" size="small" type="primary" @click="openSyncClipboardSetting">
+                  <el-button class="opt-button" size="small" type="primary" @click="openSyncClipboardSetting"
+                             :aria-label="$t('syncClipboard')">
                     <Icon icon="fluent:settings-48-regular" width="18" height="18"/>
                   </el-button>
                 </div>
@@ -726,7 +727,7 @@ Authorization: &lt;secret&gt;</pre>
       </el-dialog>
       <el-dialog
           v-model="syncClipboardShow"
-          class="forward-dialog"
+          class="forward-dialog sync-clipboard-dialog"
           @closed="resetSyncClipboardForm"
       >
         <template #header>
@@ -737,7 +738,7 @@ Authorization: &lt;secret&gt;</pre>
             </el-tooltip>
           </div>
         </template>
-        <div class="forward-set-body">
+        <div class="forward-set-body sync-clipboard-body">
           <el-input :placeholder="$t('syncClipboardUrl')" v-model="syncClipboardUrl"></el-input>
           <el-input :placeholder="$t('syncClipboardUsername')" v-model="syncClipboardUsername"></el-input>
           <el-input
@@ -774,10 +775,13 @@ Authorization: &lt;secret&gt;</pre>
           </div>
         </div>
         <template #footer>
-          <div class="dialog-footer">
-            <el-switch v-model="syncClipboardStatus" :active-value="0" :inactive-value="1" :active-text="$t('enable')"
-                       :inactive-text="$t('disable')"/>
-            <div class="webhook-footer-right">
+          <!-- 窄屏：开关与按钮组换行、按钮整行等分，保证 Save/Test 完整可见可点 -->
+          <div class="dialog-footer sync-clipboard-footer">
+            <div class="sync-clipboard-footer-switch">
+              <el-switch v-model="syncClipboardStatus" :active-value="0" :inactive-value="1" :active-text="$t('enable')"
+                         :inactive-text="$t('disable')"/>
+            </div>
+            <div class="sync-clipboard-footer-actions">
               <el-button :loading="syncClipboardTestLoading" @click="syncClipboardTest">
                 {{ $t('syncClipboardTest') }}
               </el-button>
@@ -2156,6 +2160,68 @@ function editSetting(settingForm, refreshStatus = true) {
   align-items: center;
 }
 
+// SyncClipboard 弹窗专用（不影响到其他旧 dialog）：
+// 窄屏时开关与按钮组换行，按钮组整行等分，保证 Test/Save 完整可见可点
+.sync-clipboard-dialog {
+  .sync-clipboard-footer {
+    flex-wrap: wrap;
+    gap: 12px;
+    row-gap: 10px;
+
+    .sync-clipboard-footer-switch {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .sync-clipboard-footer-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-left: auto;
+      min-width: 0;
+    }
+
+    @media (max-width: 540px) {
+      .sync-clipboard-footer-switch {
+        flex: 1 1 100%;
+      }
+
+      .sync-clipboard-footer-actions {
+        flex: 1 1 100%;
+        margin-left: 0;
+        gap: 10px;
+      }
+
+      // 两个按钮各占一半（min-width:0 防止内容把宽度撑出弹窗）
+      .sync-clipboard-footer-actions :deep(.el-button) {
+        flex: 1 1 0;
+        min-width: 0;
+        margin-left: 0 !important;
+      }
+    }
+  }
+
+  // 内容区控件也随弹窗收缩，避免 ::selection 名单/重试数字把宽度撑开
+  .sync-clipboard-body {
+    min-width: 0;
+
+    :deep(.el-input),
+    :deep(.el-input-number),
+    :deep(.el-input-tag) {
+      max-width: 100%;
+      min-width: 0;
+    }
+
+    .tg-msg-label {
+      flex-wrap: wrap;
+      gap: 8px;
+      row-gap: 8px;
+    }
+  }
+}
+
 .webhook-footer-right {
   display: flex;
   align-items: center;
@@ -2260,6 +2326,20 @@ function editSetting(settingForm, refreshStatus = true) {
     width: calc(100% - 40px) !important;
     margin-right: 20px !important;
     margin-left: 20px !important;
+  }
+}
+
+// SyncClipboard 弹窗：320px 窄屏下也要保证 footer 按钮完整可见
+:deep(.sync-clipboard-dialog.el-dialog) {
+  @media (max-width: 360px) {
+    width: calc(100% - 24px) !important;
+    margin-right: 12px !important;
+    margin-left: 12px !important;
+  }
+
+  .el-dialog__footer {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
