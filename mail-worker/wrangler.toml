@@ -45,6 +45,20 @@ crons = ["0 * * * *"]	#每小时执行；resetDaySendCount 仅在 UTC 0 点生�
 #domain = []				#邮件域名可可配置多个 示例: ["example1.com","example2.com"]
 #admin = ""					#管理员的邮箱	示例: admin@example.com
 #jwt_secret = ""			#jwt令牌的密钥,随便填一串字符串
+ai_translate_max_jobs_per_day = 60		#每个用户每天可发起的新翻译封数;默认20是照 Workers AI 免费档(10000 Neurons/天)定的,配了外部通道可以放大
+ai_translate_daily_codepoints = 300000	#每个用户每天可翻译的字符数上限;默认100000
+# --- 翻译通道 ---
+#主力通道 Gemini 免费档:密钥用 `wrangler secret put GEMINI_API_KEY` 写入(不要写在这个文件里)
+#配了 GEMINI_API_KEY 就默认走 Gemini,没有就退回 Workers AI(ai 绑定)
+#ai_translate_provider = "auto"		#auto|openai|gemini|workers-ai,默认auto(按下面的配置挑第一个可用的)
+#OpenAI 兼容端点:硅基流动/魔搭 ModelScope/DeepSeek/Groq/OpenRouter/自建 one-api 都吃这套
+#key 用 `wrangler secret put AI_TRANSLATE_OPENAI_API_KEY` 写入
+ai_translate_openai_base_url = "https://api.6byj.cn/v1"	#以 /v1 结尾即可,不要带 /chat/completions
+ai_translate_openai_model = "gpt-6-luna"		#主力模型:实测每批 8 条 3~6s、无思考开销;glm-5.3-flash 质量略好但长块会撞 30s 单次调用超时
+#ai_translate_openai_json_mode = "on"	#是否给兼容端点带 response_format=json_object,默认关(实测不少中继端点会 400 或明显变慢)
+#ai_translate_gemini_model = "gemini-2.5-flash"	#Gemini 模型,默认 gemini-2.5-flash
+#ai_translate_gemini_thinking_budget = 0		#2.5-flash 的思考预算,默认0(翻译不需要思考,思考token会吃掉输出预算)
+#ai_translate_fallback = "on"		#主用通道被限流/5xx/空返回时是否自动退回另一个通道,默认on;off 表示不退回
 
 [build]
 command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"

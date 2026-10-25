@@ -1,6 +1,7 @@
 import settingService from '../service/setting-service';
 import emailUtils from '../utils/email-utils';
 import {emailConst} from "../const/entity-const";
+import translationSchema from '../const/translation-schema';
 
 const dbInit = {
 	async init(c) {
@@ -33,7 +34,11 @@ const dbInit = {
 		await this.v3_2DB(c);
 		await this.v3_3DB(c);
 		await this.v3_4DB(c);
+		const failed = await this.initTranslationSchema(c);
 		await settingService.refresh(c);
+		if (failed.length > 0) {
+			return c.text('❌ ' + failed.join('; '), 500);
+		}
 		return c.text('success');
 	},
 
@@ -43,6 +48,36 @@ const dbInit = {
 		} catch (e) {
 			console.warn(`跳过字段：${e.message}`);
 		}
+	},
+
+	// 翻译表是常驻结构，故意不占用 vX_YDB 版本号：上游以后新增 v3_5DB 也不会撞名
+	// 返回失败原因而不是静默吞掉：翻译表缺失时接口会 500，运维必须能看到
+	async initTranslationSchema(c) {
+		const errors = [];
+		// 逐条执行：整批 batch 里一条建索引失败会把建表一起回滚，
+		// 留下“权限行在、表不在”的半初始化状态（线上踩过）
+		for (const sql of translationSchema) {
+			try {
+				await c.env.db.prepare(sql).run();
+			} catch (e) {
+				errors.push('翻译表：' + e.message);
+			}
+		}
+
+		try {
+			await c.env.db.prepare(`
+				INSERT INTO perm (name, perm_key, pid, type, sort)
+				SELECT '邮件翻译', 'email:translate', 1, 2, 2
+				WHERE NOT EXISTS (SELECT 1 FROM perm WHERE perm_key = 'email:translate')
+			`).run();
+		} catch (e) {
+			errors.push('翻译权限：' + e.message);
+		}
+
+		for (const message of errors) {
+			console.error(`初始化失败 ${message}`);
+		}
+		return errors;
 	},
 
 	async v3_3DB(c) {

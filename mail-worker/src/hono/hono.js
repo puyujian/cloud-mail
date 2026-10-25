@@ -26,10 +26,16 @@ app.onError((err, c) => {
 	}
 
 	if (err.message?.includes('D1_ERROR: no such column')) {
-		return c.json(result.fail('请按照文档更新数据库<br/>Please update the database as documented',502));
+		return c.json(result.fail('请按照文档更新数据库<br/>Please update the database as documented', 502));
 	}
 
-	return c.json(result.fail(err.message, err.code));
+	// 翻译表由 /api/init 建立，部署动作不会建表；自愈失败时给出可执行的提示
+	if (err.message?.includes('no such table: email_translation')
+		|| err.message?.includes('no such table: translation_')) {
+		return c.json(result.fail('翻译数据表缺失，请先访问 /api/init/{JWT_SECRET} 初始化数据库<br/>Translation tables missing, run /api/init/{JWT_SECRET} first', 502));
+	}
+
+	return c.json(result.fail(err.message, err.code, err.errorKey));
 });
 
 export default app;

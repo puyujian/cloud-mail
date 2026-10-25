@@ -25,3 +25,15 @@ export function emailSend(form,progress) {
         noMsg: true
     })
 }
+
+export function emailTranslateStart(data) {
+    return http.post('/email/translate', data, {noMsg: true, timeout: 35 * 1000})
+}
+
+export function emailTranslateStep(jobId) {
+    return http.post('/email/translate/step', {jobId}, {noMsg: true, timeout: 70 * 1000})
+}
+
+export function emailTranslateStatus(jobId) {
+    return http.get('/email/translate/status', {params: {jobId}, noMsg: true, timeout: 35 * 1000})
+}

@@ -27,4 +27,11 @@ i18next.init({
 
 export const t = (key, values) => i18next.t(key, values)
 
+// 请求级翻译器：长耗时异步流程中全局 lng 可能被其他请求改写，
+// 因此在入口处就把语言固定下来，避免跨请求串语言。
+export const getT = (c) => {
+	const lang = c?.req?.header?.('accept-language')?.split('-')[0];
+	return i18next.getFixedT(lang === 'en' ? 'en' : 'zh');
+}
+
 export default i18next;

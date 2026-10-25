@@ -36,13 +36,30 @@
               <div class="date">
                 <div>{{ formatDetailDate(email.createTime) }}</div>
               </div>
+              <EmailTranslationToolbar
+                  v-if="email.emailId"
+                  v-perm="'email:translate'"
+                  v-model:selected-lang="translationLang"
+                  :status="translationStatus"
+                  :loading="translationLoading"
+                  :show-original="translationShowOriginal"
+                  :progress="translationProgress"
+                  :fallback="translationFallback"
+                  :error-message="translationError"
+                  @translate="translation.translate()"
+                  @restore="translation.restoreOriginal()"
+                  @show-translation="translation.showTranslation()"
+                  @retry="translation.retry()"
+              />
             </div>
             <el-alert v-if="email.status === 3" :closable="false" :title="toMessage(email.message)" class="email-msg" type="error" show-icon />
             <el-alert v-if="email.status === 4" :closable="false" :title="$t('complained')" class="email-msg" type="warning" show-icon />
             <el-alert v-if="email.status === 5" :closable="false" :title="$t('delayed')" class="email-msg" type="warning" show-icon />
           </div>
           <el-scrollbar class="htm-scrollbar" :class="!email.attList?.length ? 'bottom-distance' : ''">
-            <ShadowHtml class="shadow-html" :html="formatImage(email.content)" v-if="email.content" />
+            <ShadowHtml class="shadow-html" :html="formatImage(translationHtml)" v-if="translationHtml" />
+            <pre v-else-if="translationText" class="email-text">{{ translationText }}</pre>
+            <ShadowHtml class="shadow-html" :html="formatImage(email.content)" v-else-if="email.content" />
             <pre v-else class="email-text" >{{email.text}}</pre>
           </el-scrollbar>
           <div class="att" v-if="email.attList?.length > 0">
@@ -82,6 +99,8 @@
 </template>
 <script setup>
 import ShadowHtml from '@/components/shadow-html/index.vue'
+import EmailTranslationToolbar from '@/components/email-translation-toolbar/index.vue'
+import {useEmailTranslation} from '@/composables/useEmailTranslation.js'
 import {computed, reactive, ref, watch, onMounted, onUnmounted, nextTick} from "vue";
 import {useRouter} from 'vue-router'
 import {ElMessage, ElMessageBox} from 'element-plus'
@@ -131,6 +150,27 @@ const sentViaEmail = computed(() => {
   return address
 })
 
+const translation = useEmailTranslation(email)
+const translationLang = translation.selectedLang
+const translationStatus = translation.status
+const translationLoading = translation.loading
+const translationShowOriginal = translation.showOriginal
+const translationProgress = translation.progress
+const translationError = translation.errorMessage
+const translationFallback = computed(() => !!translation.result.value?.fallback)
+
+// 译文只在翻译完成且未还原时接管正文；原文对象始终保持原样，回复/转发仍走原文
+const translationHtml = computed(() => {
+  if (translationStatus.value !== 'done' || translationShowOriginal.value) return ''
+  const result = translation.result.value
+  return result && result.format === 'html' ? result.content : ''
+})
+
+const translationText = computed(() => {
+  if (translationStatus.value !== 'done' || translationShowOriginal.value) return ''
+  const result = translation.result.value
+  return result && result.format === 'text' ? result.text : ''
+})
 watch(() => accountStore.currentAccountId, () => {
   handleBack()
 })

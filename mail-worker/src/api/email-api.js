@@ -3,6 +3,7 @@ import emailService from '../service/email-service';
 import result from '../model/result';
 import userContext from '../security/user-context';
 import attService from '../service/att-service';
+import translationService from '../service/email-translation-service';
 
 app.get('/email/list', async (c) => {
 	const data = await emailService.list(c, c.req.query(), userContext.getUserId(c));
@@ -34,3 +35,17 @@ app.put('/email/read', async (c) => {
 	return c.json(result.ok());
 })
 
+app.post('/email/translate', async (c) => {
+	const data = await translationService.start(c, await c.req.json(), userContext.getUserId(c));
+	return c.json(result.ok(data));
+});
+
+app.post('/email/translate/step', async (c) => {
+	const data = await translationService.step(c, await c.req.json(), userContext.getUserId(c));
+	return c.json(result.ok(data));
+});
+
+app.get('/email/translate/status', async (c) => {
+	const data = await translationService.status(c, c.req.query(), userContext.getUserId(c));
+	return c.json(result.ok(data));
+});
